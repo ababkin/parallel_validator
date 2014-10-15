@@ -1,45 +1,38 @@
 module Main where
 
+import           Control.Monad      (forever)
 import           Control.Concurrent (MVar (..), forkIO, newEmptyMVar, putMVar,
                                      takeMVar)
-import           System.IO          (hGetContents, hPutStrLn)
+import           System.IO          (hGetLine, hPutStrLn, hSetBuffering, BufferMode (..))
 import           System.Process     (CreateProcess (..), StdStream (..),
                                      createProcess, proc)
 
 main = do
-  recordToValidate <- newEmptyMVar
-  validationResult <- newEmptyMVar
-  forkIO $ getRecordsToValidate recordToValidate
-  forkIO $ validationWorker recordToValidate validationResult
-  loop validationResult
-    where
-      loop validationResult = do
-        s <- takeMVar validationResult
-        putStrLn $ "result: " ++ s
-        loop validationResult
-
-
+  request <- newEmptyMVar
+  response <- newEmptyMVar
+  forkIO $ getRecordsToValidate request
+  forkIO $ validationWorker request response
+  forever $ do
+    s <- takeMVar response
+    putStrLn $ "result: " ++ s
 
 getRecordsToValidateProc = proc "rake" ["db:validate:perform"]
 validationWorkerProc     = proc "rake" ["db:validate:worker"]
 
 getRecordsToValidate :: MVar String -> IO ()
-getRecordsToValidate recordToValidate = do
+getRecordsToValidate request = do
   (_, Just hout, _, _) <- createProcess getRecordsToValidateProc{ std_out = CreatePipe }
-  s <- hGetContents hout
-  mapM_ (putMVar recordToValidate) $ lines s
+  forever $ do
+    s <- hGetLine hout
+    putMVar request s
 
 validationWorker :: MVar String -> MVar String -> IO ()
-validationWorker recordToValidate validationResult = do
+validationWorker request response = do
   (Just hin, Just hout, _, _) <- createProcess validationWorkerProc{ std_in = CreatePipe, std_out = CreatePipe }
-  loop hin hout recordToValidate validationResult
-    where
-      loop hin hout recordToValidate validationResult = do
-        validationRequest <- takeMVar recordToValidate
-        putStrLn $ "worker received directive: " ++ validationRequest
-        hPutStrLn hin validationRequest
-        validationResponse <- hGetContents hout
-        putStrLn $ "worker responded with: " ++ validationResponse
-        putMVar validationResult validationResponse
-        loop hin hout recordToValidate validationResult
+  hSetBuffering hin LineBuffering
+  forever $ do
+    validationRequest <- takeMVar request
+    hPutStrLn hin validationRequest
+    validationResponse <- hGetLine hout
+    putMVar response validationResponse
 
