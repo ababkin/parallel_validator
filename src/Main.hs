@@ -1,38 +1,85 @@
 module Main where
 
-import           Control.Monad      (forever)
-import           Control.Concurrent (MVar (..), forkIO, newEmptyMVar, putMVar,
-                                     takeMVar)
-import           System.IO          (hGetLine, hPutStrLn, hSetBuffering, BufferMode (..))
-import           System.Process     (CreateProcess (..), StdStream (..),
-                                     createProcess, proc)
+import           Control.Applicative ((<$>))
+import           Control.Concurrent  (MVar (..), forkIO, newEmptyMVar, putMVar,
+                                      takeMVar)
+import           Control.Monad       (forever, replicateM_, unless)
+import           Data.Maybe          (Maybe (..))
+import           Data.Monoid         (Monoid (..), (<>))
+import           System.Exit         (ExitCode (..), exitWith)
+import           System.IO           (BufferMode (..), hClose, hGetLine, hIsEOF,
+                                      hPutStrLn, hSetBuffering)
+import           System.Process      (CreateProcess (..), StdStream (..),
+                                      createProcess, proc, waitForProcess)
+
+nWorkers = 4
+
+instance Monoid ExitCode where
+  mempty = ExitSuccess
+  ec@(ExitFailure n) `mappend` _ = ec
+  _ `mappend` ec = ec
 
 main = do
-  request <- newEmptyMVar
-  response <- newEmptyMVar
-  forkIO $ getRecordsToValidate request
-  forkIO $ validationWorker request response
-  forever $ do
-    s <- takeMVar response
-    putStrLn $ "result: " ++ s
+  request           <- newEmptyMVar
+  response          <- newEmptyMVar
+  status            <- newEmptyMVar
+  finishedProducing <- newEmptyMVar
+  forkIO $ producer request finishedProducing
+  replicateM_ nWorkers $ forkIO $ worker request response status
 
-getRecordsToValidateProc = proc "rake" ["db:validate:perform"]
-validationWorkerProc     = proc "rake" ["db:validate:worker"]
+  takeMVar finishedProducing
+  putStrLn "main: finished producing"
+  wait request status nWorkers ExitSuccess
+    where
+      wait :: MVar (Maybe String) -> MVar ExitCode -> Int -> ExitCode -> IO ()
+      wait _ _ 0 ec = exitWith ec
+      wait request status nWorkers statusAccum = do
+        putMVar request Nothing
+        st <- takeMVar status
+        putStrLn "main: worker finished"
+        wait request status (nWorkers - 1) $ statusAccum <> st
 
-getRecordsToValidate :: MVar String -> IO ()
-getRecordsToValidate request = do
-  (_, Just hout, _, _) <- createProcess getRecordsToValidateProc{ std_out = CreatePipe }
-  forever $ do
-    s <- hGetLine hout
-    putMVar request s
 
-validationWorker :: MVar String -> MVar String -> IO ()
-validationWorker request response = do
-  (Just hin, Just hout, _, _) <- createProcess validationWorkerProc{ std_in = CreatePipe, std_out = CreatePipe }
+{- producerProc = proc "rake" ["db:validate:perform"] -}
+{- workerProc   = proc "rake" ["db:validate:worker"] -}
+
+producerProc = proc "./Producer" []
+workerProc   = proc "./Worker" []
+
+loopUntil :: IO Bool -> IO () -> IO ()
+loopUntil condAction go = do
+  cond <- condAction
+  unless cond $ go >> loopUntil condAction go
+
+
+producer :: MVar (Maybe String) -> MVar () -> IO ()
+producer request finishedProducing = do
+  (_, Just hout, _, _) <- createProcess producerProc{ std_out = CreatePipe }
+  loopUntil (hIsEOF hout) $ do
+    putStrLn "producer: reading a line from producer..."
+    req <- hGetLine hout
+    putStrLn $ "producer: producing " ++ req
+    putMVar request $ Just req
+  putStrLn "producer: finished producing"
+  putMVar finishedProducing ()
+  putStrLn "producer: finished producing has been read"
+
+
+worker :: MVar (Maybe String) -> MVar String -> MVar ExitCode -> IO ()
+worker request response status = do
+  (Just hin, Just hout, _, processHandle) <- createProcess workerProc{ std_in = CreatePipe, std_out = CreatePipe }
   hSetBuffering hin LineBuffering
+  forkIO $ loopUntil (hIsEOF hout) $ putStrLn =<< hGetLine hout -- just output to STDOUT for now
   forever $ do
-    validationRequest <- takeMVar request
-    hPutStrLn hin validationRequest
-    validationResponse <- hGetLine hout
-    putMVar response validationResponse
+    maybeRequest <- takeMVar request
+    case maybeRequest of
+      Just req -> hPutStrLn hin req
+      Nothing -> do
+        {- putStrLn "worker: no more requests, closing the worker in pipe..." -}
+        hClose hin
+        {- putStrLn "worker: closed the pipe, waiting for process to terminate..." -}
+        st <- waitForProcess processHandle
+        putStrLn $ "worker: process finished with status: " ++ (show st)
+        putMVar status st
+
 

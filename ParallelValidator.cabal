@@ -14,9 +14,21 @@ cabal-version:       >=1.8
 executable ParallelValidator
   hs-source-dirs: src
   main-is:        Main.hs
-  ghc-options:    -O2 -Wall -static
-  -- -threaded -with-rtsopts=-N1
+  ghc-options:    -O2 -Wall -static -threaded -with-rtsopts=-N1
   build-depends:
       base >= 4 && <= 5
     , process
 
+executable Producer
+  hs-source-dirs: src/producer
+  main-is:        Main.hs
+  ghc-options:    -O2 -Wall -static
+  build-depends:
+      base >= 4 && <= 5
+
+executable Worker
+  hs-source-dirs: src/worker
+  main-is:        Main.hs
+  ghc-options:    -O2 -Wall -static
+  build-depends:
+      base >= 4 && <= 5
