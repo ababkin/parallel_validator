@@ -12,7 +12,7 @@ import           System.IO           (BufferMode (..), hClose, hGetLine, hIsEOF,
 import           System.Process      (CreateProcess (..), StdStream (..),
                                       createProcess, proc, waitForProcess)
 
-nWorkers = 4
+nWorkers = 12
 
 instance Monoid ExitCode where
   mempty = ExitSuccess
@@ -21,11 +21,10 @@ instance Monoid ExitCode where
 
 main = do
   request           <- newEmptyMVar
-  response          <- newEmptyMVar
   status            <- newEmptyMVar
   finishedProducing <- newEmptyMVar
   forkIO $ producer request finishedProducing
-  replicateM_ nWorkers $ forkIO $ worker request response status
+  replicateM_ nWorkers $ forkIO $ worker request status
 
   takeMVar finishedProducing
   putStrLn "main: finished producing"
@@ -40,11 +39,11 @@ main = do
         wait request status (nWorkers - 1) $ statusAccum <> st
 
 
-{- producerProc = proc "rake" ["db:validate:perform"] -}
-{- workerProc   = proc "rake" ["db:validate:worker"] -}
+producerProc = proc "rake" ["db:validate:perform"]
+workerProc   = proc "rake" ["db:validate:worker"]
 
-producerProc = proc "./Producer" []
-workerProc   = proc "./Worker" []
+{- producerProc = proc "./Producer" [] -}
+{- workerProc   = proc "./Worker" [] -}
 
 loopUntil :: IO Bool -> IO () -> IO ()
 loopUntil condAction go = do
@@ -56,17 +55,17 @@ producer :: MVar (Maybe String) -> MVar () -> IO ()
 producer request finishedProducing = do
   (_, Just hout, _, _) <- createProcess producerProc{ std_out = CreatePipe }
   loopUntil (hIsEOF hout) $ do
-    putStrLn "producer: reading a line from producer..."
+    {- putStrLn "producer: reading a line from producer..." -}
     req <- hGetLine hout
-    putStrLn $ "producer: producing " ++ req
+    {- putStrLn $ "producer: producing " ++ req -}
     putMVar request $ Just req
-  putStrLn "producer: finished producing"
+  {- putStrLn "producer: finished producing" -}
   putMVar finishedProducing ()
-  putStrLn "producer: finished producing has been read"
+  {- putStrLn "producer: finished producing has been read" -}
 
 
-worker :: MVar (Maybe String) -> MVar String -> MVar ExitCode -> IO ()
-worker request response status = do
+worker :: MVar (Maybe String) -> MVar ExitCode -> IO ()
+worker request status = do
   (Just hin, Just hout, _, processHandle) <- createProcess workerProc{ std_in = CreatePipe, std_out = CreatePipe }
   hSetBuffering hin LineBuffering
   forkIO $ loopUntil (hIsEOF hout) $ putStrLn =<< hGetLine hout -- just output to STDOUT for now
