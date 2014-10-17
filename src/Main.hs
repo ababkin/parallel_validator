@@ -39,8 +39,8 @@ main = do
         wait request status (nWorkers - 1) $ statusAccum <> st
 
 
-producerProc = proc "rake" ["db:validate:perform"]
-workerProc   = proc "rake" ["db:validate:worker"]
+producerProc = proc "rake" ["parallel:db:validate:producer"]
+workerProc   = proc "rake" ["parallel:db:validate:worker"]
 
 {- producerProc = proc "./Producer" [] -}
 {- workerProc   = proc "./Worker" [] -}
