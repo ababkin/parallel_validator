@@ -12,7 +12,7 @@ import           System.Exit         (ExitCode (..), exitWith)
 import           System.IO           (BufferMode (..), hClose, hGetLine, hIsEOF,
                                       hPutStrLn, hSetBuffering)
 import           System.Process      (CreateProcess (..), StdStream (..),
-                                      createProcess, shell, waitForProcess)
+                                      createProcess, shell, waitForProcess, system)
 import System.Environment (getArgs)
 
 {- nWorkers = 24 -}
@@ -27,37 +27,25 @@ instance Monoid ExitCode where
 main = do
   args <- getArgs
   case args of
-    producerCommand:workerCommand:nWorkersStr:[] -> do
+    initializerCommand:producerCommand:workerCommand:nWorkersStr:[] -> do
       let nWorkers = read nWorkersStr
       request           <- newEmptyMVar
       status            <- newEmptyMVar
       finishedProducing <- newEmptyMVar
-      forkIO $ producer producerCommand request finishedProducing
-      replicateM_ nWorkers $ forkIO $ worker workerCommand request status
 
-<<<<<<< HEAD
-  takeMVar finishedProducing
-  putStrLn "main: finished producing"
-  exitWith =<< (fmap fold $ replicateM nWorkers $ putMVar request Nothing >> takeMVar status)
-=======
-      takeMVar finishedProducing
-      putStrLn "main: finished producing"
-      wait request status nWorkers ExitSuccess
-        where
-          wait :: MVar (Maybe String) -> MVar ExitCode -> Int -> ExitCode -> IO ()
-          wait _ _ 0 ec = exitWith ec
-          wait request status nWorkers statusAccum = do
-            putMVar request Nothing
-            st <- takeMVar status
-            putStrLn "main: worker finished"
-            wait request status (nWorkers - 1) $ statusAccum <> st
+      initializerExit <- system initializerCommand
+      case initializerExit of
+        ExitSuccess -> do
+          forkIO $ producer producerCommand request finishedProducing
+          replicateM_ nWorkers $ forkIO $ worker workerCommand request status
 
-    _ -> putStrLn "Usage: ParallelValidator \"<producer command>\" \"<worker command>\" <size of worker pool>"
->>>>>>> parametrize commands and number of workers
+          takeMVar finishedProducing
+          putStrLn "main: finished producing"
+          exitWith =<< (fmap fold $ replicateM nWorkers $ putMVar request Nothing >> takeMVar status)
 
+        ExitFailure ec -> exitWith $ ExitFailure ec
 
-{- producerProc = proc "./Producer" [] -}
-{- workerProc   = proc "./Worker" [] -}
+    _ -> putStrLn "Usage: ParallelValidator \"<initializer command>\" \"<producer command>\" \"<worker command>\" <size of worker pool>"
 
 loopUntil :: IO Bool -> IO () -> IO ()
 loopUntil condAction go = do
@@ -65,22 +53,10 @@ loopUntil condAction go = do
   unless cond $ go >> loopUntil condAction go
 
 
-<<<<<<< HEAD
-producer :: MVar (Maybe String) -> MVar () -> IO ()
-producer request finishedProducing = do
-  (_, Just hout, _, _) <- createProcess producerProc{ std_out = CreatePipe }
-  loopUntil (hIsEOF hout) $ (Just <$> hGetLine hout) >>= putMVar request
-=======
 producer :: String -> MVar (Maybe String) -> MVar () -> IO ()
 producer producerCommand request finishedProducing = do
   (_, Just hout, _, _) <- createProcess (shell producerCommand){ std_out = CreatePipe }
-  loopUntil (hIsEOF hout) $ do
-    {- putStrLn "producer: reading a line from producer..." -}
-    req <- hGetLine hout
-    {- putStrLn $ "producer: producing " ++ req -}
-    putMVar request $ Just req
-  {- putStrLn "producer: finished producing" -}
->>>>>>> parametrize commands and number of workers
+  loopUntil (hIsEOF hout) $ (Just <$> hGetLine hout) >>= putMVar request
   putMVar finishedProducing ()
 
 
